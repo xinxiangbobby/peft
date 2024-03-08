@@ -7,6 +7,7 @@ import math
 import os
 import threading
 import warnings
+from contextlib import nullcontext
 from pathlib import Path
 from typing import Optional
 
@@ -214,6 +215,17 @@ def parse_args(input_args=None):
     )
 
     parser.add_argument(
+        "--num_dataloader_workers", type=int, default=1, help="Num of workers for the training dataloader."
+    )
+
+    parser.add_argument(
+        "--no_tracemalloc",
+        default=False,
+        action="store_true",
+        help="Flag to stop memory allocation tracing during training. This could speed up training on Windows.",
+    )
+
+    parser.add_argument(
         "--train_batch_size", type=int, default=4, help="Batch size (per device) for the training dataloader."
     )
     parser.add_argument(
@@ -328,6 +340,18 @@ def parse_args(input_args=None):
             'The integration to report the results and logs to. Supported platforms are `"tensorboard"`'
             ' (default), `"wandb"` and `"comet_ml"`. Use `"all"` to report to all integrations.'
         ),
+    )
+    parser.add_argument(
+        "--wandb_key",
+        type=str,
+        default=None,
+        help=("If report to option is set to wandb, api-key for wandb used for login to wandb "),
+    )
+    parser.add_argument(
+        "--wandb_project_name",
+        type=str,
+        default=None,
+        help=("If report to option is set to wandb, project name in wandb for log tracking  "),
     )
     parser.add_argument(
         "--mixed_precision",
@@ -569,9 +593,13 @@ def main(args):
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         mixed_precision=args.mixed_precision,
         log_with=args.report_to,
-        logging_dir=logging_dir,
+        project_dir=logging_dir,
     )
+    if args.report_to == "wandb":
+        import wandb
 
+        wandb.login(key=args.wandb_key)
+        wandb.init(project=args.wandb_project_name)
     # Currently, it's not possible to do gradient accumulation when training two models with accelerate.accumulate
     # This will be enabled soon in accelerate. For now, we don't allow gradient accumulation when training two models.
     # TODO (patil-suraj): Remove this check when gradient accumulation with two models is enabled in accelerate.
@@ -783,7 +811,7 @@ def main(args):
         batch_size=args.train_batch_size,
         shuffle=True,
         collate_fn=lambda examples: collate_fn(examples, args.with_prior_preservation),
-        num_workers=1,
+        num_workers=args.num_dataloader_workers,
     )
 
     # Scheduler and math around the number of training steps.
@@ -877,12 +905,14 @@ def main(args):
         unet.train()
         if args.train_text_encoder:
             text_encoder.train()
-        with TorchTracemalloc() as tracemalloc:
+        with TorchTracemalloc() if not args.no_tracemalloc else nullcontext() as tracemalloc:
             for step, batch in enumerate(train_dataloader):
                 # Skip steps until we reach the resumed step
                 if args.resume_from_checkpoint and epoch == first_epoch and step < resume_step:
                     if step % args.gradient_accumulation_steps == 0:
                         progress_bar.update(1)
+                        if args.report_to == "wandb":
+                            accelerator.print(progress_bar)
                     continue
 
                 with accelerator.accumulate(unet):
@@ -948,6 +978,8 @@ def main(args):
                 # Checks if the accelerator has performed an optimization step behind the scenes
                 if accelerator.sync_gradients:
                     progress_bar.update(1)
+                    if args.report_to == "wandb":
+                        accelerator.print(progress_bar)
                     global_step += 1
 
                     # if global_step % args.checkpointing_steps == 0:
@@ -1014,23 +1046,25 @@ def main(args):
                 if global_step >= args.max_train_steps:
                     break
         # Printing the GPU memory usage details such as allocated memory, peak memory, and total memory usage
-        accelerator.print("GPU Memory before entering the train : {}".format(b2mb(tracemalloc.begin)))
-        accelerator.print("GPU Memory consumed at the end of the train (end-begin): {}".format(tracemalloc.used))
-        accelerator.print("GPU Peak Memory consumed during the train (max-begin): {}".format(tracemalloc.peaked))
-        accelerator.print(
-            "GPU Total Peak Memory consumed during the train (max): {}".format(
-                tracemalloc.peaked + b2mb(tracemalloc.begin)
-            )
-        )
 
-        accelerator.print("CPU Memory before entering the train : {}".format(b2mb(tracemalloc.cpu_begin)))
-        accelerator.print("CPU Memory consumed at the end of the train (end-begin): {}".format(tracemalloc.cpu_used))
-        accelerator.print("CPU Peak Memory consumed during the train (max-begin): {}".format(tracemalloc.cpu_peaked))
-        accelerator.print(
-            "CPU Total Peak Memory consumed during the train (max): {}".format(
-                tracemalloc.cpu_peaked + b2mb(tracemalloc.cpu_begin)
+        if not args.no_tracemalloc:
+            accelerator.print(f"GPU Memory before entering the train : {b2mb(tracemalloc.begin)}")
+            accelerator.print(f"GPU Memory consumed at the end of the train (end-begin): {tracemalloc.used}")
+            accelerator.print(f"GPU Peak Memory consumed during the train (max-begin): {tracemalloc.peaked}")
+            accelerator.print(
+                "GPU Total Peak Memory consumed during the train (max): {}".format(
+                    tracemalloc.peaked + b2mb(tracemalloc.begin)
+                )
             )
-        )
+
+            accelerator.print(f"CPU Memory before entering the train : {b2mb(tracemalloc.cpu_begin)}")
+            accelerator.print(f"CPU Memory consumed at the end of the train (end-begin): {tracemalloc.cpu_used}")
+            accelerator.print(f"CPU Peak Memory consumed during the train (max-begin): {tracemalloc.cpu_peaked}")
+            accelerator.print(
+                "CPU Total Peak Memory consumed during the train (max): {}".format(
+                    tracemalloc.cpu_peaked + b2mb(tracemalloc.cpu_begin)
+                )
+            )
 
     # Create the pipeline using using the trained modules and save it.
     accelerator.wait_for_everyone()

@@ -11,10 +11,12 @@ RUN apt-get update && \
     apt-get clean && \
     rm -rf /var/lib/apt/lists*
 
+
 # Install audio-related libraries 
 RUN apt-get update && \
     apt install -y ffmpeg
 
+RUN apt install -y libsndfile1-dev
 RUN git lfs install
 
 # Create our conda env - copied from https://github.com/huggingface/accelerate/blob/main/docker/accelerate-gpu/Dockerfile
@@ -31,9 +33,12 @@ SHELL ["/bin/bash", "-c"]
 # Activate the conda env and install transformers + accelerate from source
 RUN source activate peft && \
     python3 -m pip install --no-cache-dir \
+    librosa \
+    "soundfile>=0.12.1" \
+    scipy \
     git+https://github.com/huggingface/transformers \
     git+https://github.com/huggingface/accelerate \
-    git+https://github.com/huggingface/peft#egg=peft[test]
+    peft[test]@git+https://github.com/huggingface/peft
 
 # Install apt libs
 RUN apt-get update && \

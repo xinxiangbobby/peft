@@ -1,4 +1,3 @@
-# coding=utf-8
 # Copyright 2023-present the HuggingFace Inc. team.
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -29,7 +28,7 @@ config = LoraConfig(
 )
 
 # We load our model and processor using `transformers`
-model = AutoModelForVision2Seq.from_pretrained("Salesforce/blip2-opt-2.7b", load_in_8bit=True, device_map={"": 0})
+model = AutoModelForVision2Seq.from_pretrained("Salesforce/blip2-opt-2.7b", load_in_8bit=True)
 processor = AutoProcessor.from_pretrained("Salesforce/blip2-opt-2.7b")
 
 # Get our peft model and print the number of trainable parameters

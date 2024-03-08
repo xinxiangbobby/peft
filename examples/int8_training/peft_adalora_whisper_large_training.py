@@ -422,16 +422,11 @@ def evaluation_loop(model, eval_dataloader, processor, normalizer, metric, force
 def main():
     args = parse_args()
 
-    # initialize accelerator
-    accelerator = (
-        Accelerator(
-            log_with=args.report_to,
-            project_dir=args.output_dir,
-            gradient_accumulation_steps=args.gradient_accumulation_steps,
-        )
-        if args.with_tracking
-        else Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps)
-    )
+    accelerator_kwargs = {"gradient_accumulation_steps": args.gradient_accumulation_steps}
+    if args.with_tracking:
+        accelerator_kwargs["log_with"] = args.report_to
+        accelerator_kwargs["project_dir"] = args.output_dir
+    accelerator = Accelerator(**accelerator_kwargs)
 
     # Make one log on every process with the configuration for debugging.
     logging.basicConfig(
@@ -538,9 +533,7 @@ def main():
     metric = evaluate.load("wer")
 
     # model
-    model = WhisperForConditionalGeneration.from_pretrained(
-        args.model_name_or_path, load_in_8bit=True, device_map="auto"
-    )
+    model = WhisperForConditionalGeneration.from_pretrained(args.model_name_or_path, load_in_8bit=True)
     model.config.forced_decoder_ids = None
     model.config.suppress_tokens = []
     if len(set(model.hf_device_map.values()).intersection({"cpu", "disk"})) > 0:
